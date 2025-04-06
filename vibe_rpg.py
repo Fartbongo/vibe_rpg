@@ -195,7 +195,7 @@ def next_level():
     # Place player at a random position
     while True:
         player_x = random.randint(1, map_width - 2)
-        player_y = random.randint(1, map_height - 2)  # Use map_height here
+        player_y = random.randint(1, map_height - 2)
         if map_layout[player_y][player_x] == 0:  # Ensure it's not a wall
             player_pos = [player_x, player_y]
             occupied_positions.add((player_x, player_y))
@@ -237,6 +237,7 @@ def next_level():
     # Place enemies
     enemies.clear()
     for _ in range(level + 2):  # Increase enemies with level
+        attempts = 0
         while True:
             enemy_x = random.randint(1, map_width - 2)
             enemy_y = random.randint(1, map_height - 2)
@@ -244,17 +245,26 @@ def next_level():
                 enemies.append({"pos": [enemy_x, enemy_y], "health": 5, "attack": 2})
                 occupied_positions.add((enemy_x, enemy_y))
                 break
+            attempts += 1
+            if attempts > 100:
+                print("Failed to place an enemy after 100 attempts.")
+                break
 
     # Place health blocks
     health_blocks.clear()
     num_health_blocks = min(3, max(1, len(enemies) // 4))  # Limit to a maximum of 3 health blocks
     for _ in range(num_health_blocks):
+        attempts = 0
         while True:
             health_x = random.randint(1, map_width - 2)
             health_y = random.randint(1, map_height - 2)
             if (health_x, health_y) not in occupied_positions and map_layout[health_y][health_x] == 0:
                 health_blocks.append([health_x, health_y])
                 occupied_positions.add((health_x, health_y))
+                break
+            attempts += 1
+            if attempts > 100:
+                print("Failed to place a health block after 100 attempts.")
                 break
 
 
@@ -311,6 +321,30 @@ def game_over():
                     exit()
 
 
+def draw_bump_animation(player_pos, direction):
+    """Create a bump animation when the player hits a wall."""
+    bump_offset = 5  # Amount of offset for the bump
+    dx, dy = direction
+
+    # Calculate the bumped position
+    bumped_x = player_pos[0] + dx * bump_offset / GRID_SIZE
+    bumped_y = player_pos[1] + dy * bump_offset / GRID_SIZE
+
+    # Draw the bumped position briefly
+    draw_cube(bumped_x, bumped_y, PLAYER_COLOR)
+    pygame.display.flip()
+    pygame.time.delay(100)  # Delay for the bump effect
+
+    # Redraw the original position
+    draw_map_with_depth()
+    draw_player_with_depth()
+    draw_treasure_with_depth()
+    draw_enemies_with_depth()
+    draw_health_blocks()
+    draw_stats()
+    pygame.display.flip()
+
+
 # Main Game Loop
 reset_game()
 running = True
@@ -319,16 +353,30 @@ while running:
         if event.type == pygame.QUIT:
             running = False
 
-    # Handle movement
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT] and map_layout[player_pos[1]][player_pos[0] - 1] == 0:
-        player_pos[0] -= 1
-    if keys[pygame.K_RIGHT] and map_layout[player_pos[1]][player_pos[0] + 1] == 0:
-        player_pos[0] += 1
-    if keys[pygame.K_UP] and map_layout[player_pos[1] - 1][player_pos[0]] == 0:
-        player_pos[1] -= 1
-    if keys[pygame.K_DOWN] and map_layout[player_pos[1] + 1][player_pos[0]] == 0:
-        player_pos[1] += 1
+        # Handle movement on key press
+        if event.type == pygame.KEYDOWN:
+            original_pos = player_pos[:]
+            if event.key == pygame.K_LEFT:
+                if map_layout[player_pos[1]][player_pos[0] - 1] == 0:
+                    player_pos[0] -= 1
+                else:
+                    # Bump animation for hitting a wall
+                    draw_bump_animation(player_pos, (-1, 0))
+            elif event.key == pygame.K_RIGHT:
+                if map_layout[player_pos[1]][player_pos[0] + 1] == 0:
+                    player_pos[0] += 1
+                else:
+                    draw_bump_animation(player_pos, (1, 0))
+            elif event.key == pygame.K_UP:
+                if map_layout[player_pos[1] - 1][player_pos[0]] == 0:
+                    player_pos[1] -= 1
+                else:
+                    draw_bump_animation(player_pos, (0, -1))
+            elif event.key == pygame.K_DOWN:
+                if map_layout[player_pos[1] + 1][player_pos[0]] == 0:
+                    player_pos[1] += 1
+                else:
+                    draw_bump_animation(player_pos, (0, 1))
 
     # Check for combat
     for enemy in enemies[:]:
@@ -357,6 +405,6 @@ while running:
     draw_health_blocks()
     draw_stats()
     pygame.display.flip()
-    clock.tick(10)
+    clock.tick(60)  # Increase frame rate for smoother animations
 
 pygame.quit()
