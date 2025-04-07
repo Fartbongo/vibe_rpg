@@ -1,6 +1,7 @@
 import pygame
 import random
 from collections import deque
+import os
 
 # Initialize Pygame
 pygame.init()
@@ -17,7 +18,7 @@ HEALTH_COLOR = (0, 255, 0)
 
 # Initialize screen and clock
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Minimalist RPG")
+pygame.display.set_caption("Vube")
 clock = pygame.time.Clock()
 
 # Global variables
@@ -33,19 +34,21 @@ enemies = []
 health_blocks = []
 treasure_pos = [0, 0]
 
+HIGH_SCORE_FILE = "high_scores.txt"
+
 
 # Helper Functions
 def adjust_color(color, factor):
     """Adjust the brightness of a color by a given factor."""
-    return [int(c // factor) for c in color]
+    return [max(0, min(255, int(c // factor))) for c in color]
 
 
-def draw_cube(x, y, color, depth=10, alpha=150):
+def draw_cube(x, y, color, depth=10, alpha=150, left_wall=False, right_wall=False, top_wall=False):
     """Draw a translucent cube at grid position (x, y) with the given color and depth."""
     cube_surface = pygame.Surface((GRID_SIZE + depth, GRID_SIZE + depth), pygame.SRCALPHA)
     base_x, base_y = depth, depth
 
-    # Front face
+    # Front face (always visible)
     front_rect = [
         (base_x, base_y + GRID_SIZE),
         (base_x, base_y),
@@ -54,32 +57,35 @@ def draw_cube(x, y, color, depth=10, alpha=150):
     ]
     pygame.draw.polygon(cube_surface, (*color, alpha), front_rect)
 
-    # Top face
-    top_rect = [
-        (base_x, base_y),
-        (base_x + GRID_SIZE, base_y),
-        (base_x + GRID_SIZE - depth, base_y - depth),
-        (base_x - depth, base_y - depth)
-    ]
-    pygame.draw.polygon(cube_surface, (*adjust_color(color, 1.2), alpha), top_rect)
+    # Top face (only draw if not blocked by a top wall)
+    if not top_wall:
+        top_rect = [
+            (base_x, base_y),
+            (base_x + GRID_SIZE, base_y),
+            (base_x + GRID_SIZE - depth, base_y - depth),
+            (base_x - depth, base_y - depth)
+        ]
+        pygame.draw.polygon(cube_surface, (*adjust_color(color, 1.2), alpha), top_rect)
 
-    # Left face
-    left_rect = [
-        (base_x, base_y),
-        (base_x - depth, base_y - depth),
-        (base_x - depth, base_y + GRID_SIZE - depth),
-        (base_x, base_y + GRID_SIZE)
-    ]
-    pygame.draw.polygon(cube_surface, (*adjust_color(color, 1.5), alpha), left_rect)
+    # Left face (only draw if not blocked by a left wall)
+    if not left_wall:
+        left_rect = [
+            (base_x, base_y),
+            (base_x - depth, base_y - depth),
+            (base_x - depth, base_y + GRID_SIZE - depth),
+            (base_x, base_y + GRID_SIZE)
+        ]
+        pygame.draw.polygon(cube_surface, (*adjust_color(color, 1.5), alpha), left_rect)
 
-    # Right face
-    right_rect = [
-        (base_x + GRID_SIZE, base_y),
-        (base_x + GRID_SIZE - depth, base_y - depth),
-        (base_x + GRID_SIZE - depth, base_y + GRID_SIZE - depth),
-        (base_x + GRID_SIZE, base_y + GRID_SIZE)
-    ]
-    pygame.draw.polygon(cube_surface, (*adjust_color(color, 1.3), alpha), right_rect)
+    # Right face (only draw if not blocked by a right wall)
+    if not right_wall:
+        right_rect = [
+            (base_x + GRID_SIZE, base_y),
+            (base_x + GRID_SIZE + depth, base_y - depth),
+            (base_x + GRID_SIZE + depth, base_y + GRID_SIZE - depth),
+            (base_x + GRID_SIZE, base_y + GRID_SIZE)
+        ]
+        pygame.draw.polygon(cube_surface, (*adjust_color(color, 1.3), alpha), right_rect)
 
     # Blit the cube surface onto the main screen
     screen.blit(cube_surface, (x * GRID_SIZE - depth, y * GRID_SIZE - depth))
@@ -89,9 +95,18 @@ def draw_map_with_depth():
     """Draw the map with walls and open spaces."""
     for row in range(len(map_layout)):
         for col in range(len(map_layout[row])):
-            if map_layout[row][col] == 1:
-                draw_cube(col, row, BLACK)
-            else:
+            if map_layout[row][col] == 1:  # Wall tile
+                # Check for adjacent walls
+                left_wall = col > 0 and map_layout[row][col - 1] == 1
+                right_wall = col < len(map_layout[row]) - 1 and map_layout[row][col + 1] == 1
+                top_wall = row > 0 and map_layout[row - 1][col] == 1
+
+                # Debug print for adjacency flags
+                print(f"Wall at ({col}, {row}): left_wall={left_wall}, right_wall={right_wall}, top_wall={top_wall}")
+
+                # Pass adjacency information to draw_cube
+                draw_cube(col, row, BLACK, left_wall=left_wall, right_wall=right_wall, top_wall=top_wall)
+            else:  # Open space
                 draw_cube(col, row, WHITE)
 
 
@@ -127,10 +142,10 @@ def draw_stats():
     elapsed_time = (pygame.time.get_ticks() - start_time) // 1000
     timer_text = font.render(f"Time: {elapsed_time}s", True, WHITE)
 
-    # Calculate positions for horizontal alignment
-    screen.blit(health_text, (10, 10))
-    screen.blit(level_text, (150, 10))
-    screen.blit(timer_text, (300, 10))
+    # Adjust the y-position to move the stats higher
+    screen.blit(health_text, (10, 5))  # Move up from 10 to 5
+    screen.blit(level_text, (150, 5))  # Move up from 10 to 5
+    screen.blit(timer_text, (300, 5))  # Move up from 10 to 5
 
 
 def combat(enemy):
@@ -280,33 +295,90 @@ def reset_game():
 
 
 def game_over():
-    """Display the Game Over screen and handle restart or quit."""
-    global top_score, top_score_time, elapsed_time
+    """Display the Game Over screen, handle high scores, and allow restart or quit."""
+    global top_score, top_score_time, elapsed_time, running
 
     elapsed_time = (pygame.time.get_ticks() - start_time) // 1000
+    high_scores = load_high_scores()
+    
+    # Define fonts
+    font = pygame.font.Font(None, 48)
+    small_font = pygame.font.Font(None, 24)
+    
+    # Check if current score is a high score
+    is_high_score = (len(high_scores) < 10 or 
+                    any(level > score["level"] or 
+                        (level == score["level"] and elapsed_time < score["time"]) 
+                        for score in high_scores))
 
-    # Update top score
-    if level > top_score or (level == top_score and (top_score_time is None or elapsed_time < top_score_time)):
-        top_score = level
-        top_score_time = elapsed_time
+    def draw_game_over_screen():
+        """Helper function to redraw the game over screen."""
+        screen.fill(BLACK)
+        
+        # Game Over text
+        game_over_text = font.render("Game Over", True, (255, 0, 0))
+        screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, 10))
+        
+        # Player's score
+        score_text = small_font.render(f"Your Score: Level {level}, Time {elapsed_time}s", True, WHITE)
+        screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, 50))
+        
+        # High scores
+        high_scores_title = small_font.render("Top 10 High Scores:", True, WHITE)
+        screen.blit(high_scores_title, (SCREEN_WIDTH // 2 - high_scores_title.get_width() // 2, 80))
+        
+        sorted_scores = sorted(high_scores, key=lambda s: (-s["level"], s["time"]))[:10]
+        for i, score in enumerate(sorted_scores):
+            score_text = small_font.render(
+                f"{i + 1}. {score['initials']} - Level {score['level']}, Time {score['time']}s", 
+                True, WHITE
+            )
+            screen.blit(score_text, (50, 110 + i * 20))
+        
+        pygame.display.flip()
 
-    # Display Game Over screen
-    font = pygame.font.Font(None, 72)
-    small_font = pygame.font.Font(None, 36)
-    screen.fill(BLACK)
+    # Initial screen draw
+    draw_game_over_screen()
 
-    game_over_text = font.render("Game Over", True, (255, 0, 0))
-    score_text = small_font.render(f"Your Score: Level {level}, Time {elapsed_time}s", True, WHITE)
-    top_score_text = small_font.render(f"Top Score: Level {top_score}, Time {top_score_time}s", True, WHITE)
+    # If it's a high score, prompt for initials
+    if is_high_score:
+        initials = ""
+        instructions = small_font.render("New High Score! Enter your initials (3 letters):", True, WHITE)
+        screen.blit(instructions, (SCREEN_WIDTH // 2 - instructions.get_width() // 2, 350))
+        pygame.display.flip()
+
+        # Handle initials entry
+        while len(initials) < 3:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_BACKSPACE:
+                        initials = initials[:-1]
+                    elif event.unicode.isalpha() and len(initials) < 3:
+                        initials += event.unicode.upper()
+                    
+                    # Update display
+                    draw_game_over_screen()
+                    screen.blit(instructions, (SCREEN_WIDTH // 2 - instructions.get_width() // 2, 350))
+                    current = small_font.render(initials, True, WHITE)
+                    screen.blit(current, (SCREEN_WIDTH // 2 - current.get_width() // 2, 380))
+                    pygame.display.flip()
+
+        # Save the high score
+        high_scores.append({"initials": initials, "level": level, "time": elapsed_time})
+        high_scores.sort(key=lambda s: (-s["level"], s["time"]))
+        high_scores = high_scores[:10]
+        save_high_scores(high_scores)
+        draw_game_over_screen()
+
+    # Show restart/quit instructions
     restart_text = small_font.render("Press R to Restart or Q to Quit", True, WHITE)
-
-    screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, 100))
-    screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, 200))
-    screen.blit(top_score_text, (SCREEN_WIDTH // 2 - top_score_text.get_width() // 2, 250))
-    screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, 300))
+    screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, 350))
     pygame.display.flip()
 
-    # Wait for input
+    # Wait for restart or quit
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -316,7 +388,7 @@ def game_over():
                 if event.key == pygame.K_r:
                     reset_game()
                     return
-                if event.key == pygame.K_q:
+                elif event.key == pygame.K_q:
                     pygame.quit()
                     exit()
 
@@ -345,7 +417,83 @@ def draw_bump_animation(player_pos, direction):
     pygame.display.flip()
 
 
+def load_high_scores():
+    """Load high scores from a file."""
+    if not os.path.exists(HIGH_SCORE_FILE):
+        return []
+    with open(HIGH_SCORE_FILE, "r") as file:
+        scores = []
+        valid_scores = []
+        for line in file:
+            parts = line.strip().split(",")
+            if len(parts) == 3:  # Ensure the line has exactly three parts
+                try:
+                    scores.append({"initials": parts[0], "level": int(parts[1]), "time": int(parts[2])})
+                except ValueError:
+                    print(f"Skipping malformed line: {line.strip()}")
+        return scores  # Ensure the function returns the scores list
+
+    return scores  # Ensure the function returns the scores list
+
+def save_high_scores(high_scores):
+    """Save high scores to a file."""
+    with open(HIGH_SCORE_FILE, "w") as file:
+        for score in high_scores:
+            file.write(f"{score['initials']},{score['level']},{score['time']}\n")
+
+
+def display_high_scores():
+    """Display the high scores."""
+    high_scores = load_high_scores()
+    font = pygame.font.Font(None, 36)
+    screen.fill(BLACK)
+
+    title_text = font.render("High Scores", True, WHITE)
+    screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, 50))
+
+    for i, score in enumerate(high_scores):
+        score_text = font.render(
+            f"{i + 1}. {score['initials']} - Level {score['level']}, Time {score['time']}s", True, WHITE
+        )
+        screen.blit(score_text, (50, 100 + i * 40))
+
+    pygame.display.flip()
+    pygame.display.flip()
+    pygame.display.flip()
+    display_start_time = pygame.time.get_ticks()
+    while pygame.time.get_ticks() - display_start_time < 3000:
+        pygame.time.wait(100)  # Add a small delay to avoid busy waiting
+
+def start_screen():
+    font = pygame.font.Font(None, 72)
+    small_font = pygame.font.Font(None, 36)
+    screen.fill(BLACK)
+
+    title_text = font.render("Vube", True, WHITE)
+    instructions_text = small_font.render("Press ENTER to Start", True, WHITE)
+
+    screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, 150))
+    screen.blit(instructions_text, (SCREEN_WIDTH // 2 - instructions_text.get_width() // 2, 250))
+    pygame.display.flip()
+
+    # Wait for the player to press ENTER
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                running = False  # Exit the loop to begin the game
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                return  # Exit the start screen and begin the game
+
+
 # Main Game Loop
+start_screen()  # Display the start screen
 reset_game()
 running = True
 while running:
@@ -360,7 +508,6 @@ while running:
                 if map_layout[player_pos[1]][player_pos[0] - 1] == 0:
                     player_pos[0] -= 1
                 else:
-                    # Bump animation for hitting a wall
                     draw_bump_animation(player_pos, (-1, 0))
             elif event.key == pygame.K_RIGHT:
                 if map_layout[player_pos[1]][player_pos[0] + 1] == 0:
@@ -405,6 +552,6 @@ while running:
     draw_health_blocks()
     draw_stats()
     pygame.display.flip()
-    clock.tick(60)  # Increase frame rate for smoother animations
+    clock.tick(60)
 
 pygame.quit()
